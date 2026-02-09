@@ -81,10 +81,9 @@ def create_training_data(filename='lichess_db_standard_rated_2013-07.pgn', num_g
         np.save('X.npy', X)
         np.save('y.npy', y)
 
-model = models.Sequential()
+board = chess.Board()
 
-model.add(layers.Conv2D(64, (3, 3), padding='same', activation='relu', input_shape=(8, 8, 12)))
-model.add(layers.Conv2D(64, (3, 3), padding='same', activation='relu'))
+print(board.turn)
 
 
 
