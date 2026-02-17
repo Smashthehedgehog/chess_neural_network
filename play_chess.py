@@ -1,9 +1,8 @@
 import chess
 import numpy as np
-
 import tensorflow as tf
-
 import pygame
+import argparse
 
 def create_tensor(chess_board):
     """
@@ -64,7 +63,6 @@ def get_ai_move(board, model):
         # 4. Ask the model "Who is winning now?"
         prediction = model.predict(input_tensor, verbose=0)[0][0]
 
-        print(f"Prediction for {move}: {prediction}")
 
         # 5. Check if this is the best move found so far
         if board.turn == chess.BLACK: # We just made a White move, so it's now Black's turn to evaluate
@@ -195,30 +193,13 @@ def get_square_from_mouse(pos):
         return chess.square(file, rank)
     return None
 
-# board = chess.Board()
-# model = tf.keras.models.load_model('my_chess_model.keras')
-
-# while not board.is_game_over():
-#     if board.turn == chess.WHITE:
-#         # Human Move
-#         move_str = input("Enter move (e.g. e2e4): ")
-#         board.push_san(move_str)
-#     else:
-#         # AI Move
-#         print("AI is thinking...")
-#         move = get_ai_move_fast(board, model)
-#         board.push(move)
-#         print(f"AI played: {move}")
-    
-#     print(board)
-
-def main():
+def play_human_vs_human():
+    """Human vs Human game mode with GUI."""
     pygame.init()
     screen = pygame.display.set_mode((BOARD_SIZE, BOARD_SIZE))
-    pygame.display.set_caption("Chess Game - Drag and Drop")
+    pygame.display.set_caption("Chess Game - Human vs Human")
     images = load_images()
     board = chess.Board()
-    model = tf.keras.models.load_model('my_chess_model.keras')
     
     # Drag and drop state
     dragging = False
@@ -229,13 +210,116 @@ def main():
     clock = pygame.time.Clock()
     
     while True:
-        # A. AI TURN
+        # EVENT HANDLING (User clicks and drags)
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                return
+            
+            # Handle drag and drop for both players
+            if not board.is_game_over():
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    # Start dragging
+                    square = get_square_from_mouse(event.pos)
+                    if square is not None:
+                        piece = board.piece_at(square)
+                        # Only allow dragging pieces of the current player's color
+                        if piece and piece.color == board.turn:
+                            dragging = True
+                            dragging_piece = piece
+                            dragging_from = square
+                            mouse_pos = event.pos
+                
+                elif event.type == pygame.MOUSEMOTION:
+                    # Update mouse position while dragging
+                    if dragging:
+                        mouse_pos = event.pos
+                
+                elif event.type == pygame.MOUSEBUTTONUP:
+                    # Drop the piece
+                    if dragging:
+                        drop_square = get_square_from_mouse(event.pos)
+                        
+                        if drop_square is not None and dragging_from is not None:
+                            # Try to create a move from dragging_from to drop_square
+                            move = chess.Move(dragging_from, drop_square)
+                            
+                            # Check for pawn promotion
+                            if dragging_piece.piece_type == chess.PAWN:
+                                # If pawn reaches the last rank, promote to queen
+                                rank = chess.square_rank(drop_square)
+                                if (rank == 7 and dragging_piece.color == chess.WHITE) or \
+                                   (rank == 0 and dragging_piece.color == chess.BLACK):
+                                    move = chess.Move(dragging_from, drop_square, promotion=chess.QUEEN)
+                            
+                            # Check if this move is legal
+                            if move in board.legal_moves:
+                                board.push(move)
+                                print(f"{'White' if board.turn == chess.BLACK else 'Black'} played: {move}")
+                        
+                        # Reset dragging state
+                        dragging = False
+                        dragging_piece = None
+                        dragging_from = None
+                        mouse_pos = None
+
+        # DRAWING
+        draw_board(screen)
+        
+        # Highlight the square we're dragging from
+        if dragging and dragging_from is not None:
+            highlight_square(screen, dragging_from, pygame.Color(255, 255, 0))  # Yellow highlight
+            
+            # Highlight valid move destinations
+            for move in board.legal_moves:
+                if move.from_square == dragging_from:
+                    highlight_square(screen, move.to_square, pygame.Color(0, 255, 0))  # Green highlight
+        
+        # Draw pieces on top of the board
+        draw_pieces(screen, board, images, dragging_piece, dragging_from, mouse_pos)
+        
+        # Display game over message
+        if board.is_game_over():
+            font = pygame.font.Font(None, 74)
+            if board.is_checkmate():
+                winner = "Black" if board.turn == chess.WHITE else "White"
+                text = font.render(f"{winner} Wins!", True, pygame.Color(255, 0, 0))
+            else:
+                text = font.render("Draw!", True, pygame.Color(255, 0, 0))
+            text_rect = text.get_rect(center=(BOARD_SIZE // 2, BOARD_SIZE // 2))
+            screen.blit(text, text_rect)
+        
+        pygame.display.flip()
+        clock.tick(60)  # 60 FPS
+
+def play_human_vs_ai(ai_model_path):
+    """Human vs AI game mode with GUI."""
+    pygame.init()
+    screen = pygame.display.set_mode((BOARD_SIZE, BOARD_SIZE))
+    pygame.display.set_caption("Chess Game - Human vs AI")
+    images = load_images()
+    board = chess.Board()
+    
+    print(f"Loading AI model from: {ai_model_path}")
+    model = tf.keras.models.load_model(ai_model_path)
+    
+    # Drag and drop state
+    dragging = False
+    dragging_piece = None
+    dragging_from = None
+    mouse_pos = None
+    
+    clock = pygame.time.Clock()
+    
+    while True:
+        # AI TURN (Black)
         if not board.is_game_over() and board.turn == chess.BLACK and not dragging:
+            print("AI is thinking...")
             move = get_ai_move_fast(board, model)
             board.push(move)
             print(f"AI played: {move}")
 
-        # B. EVENT HANDLING (User clicks and drags)
+        # EVENT HANDLING (User clicks and drags)
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
@@ -280,8 +364,6 @@ def main():
                             if move in board.legal_moves:
                                 board.push(move)
                                 print(f"Player played: {move}")
-                            else:
-                                print(f"Illegal move attempted: {move}")
                         
                         # Reset dragging state
                         dragging = False
@@ -289,8 +371,7 @@ def main():
                         dragging_from = None
                         mouse_pos = None
 
-        # C. DRAWING
-        # Draw the board once
+        # DRAWING
         draw_board(screen)
         
         # Highlight the square we're dragging from
@@ -318,6 +399,130 @@ def main():
         
         pygame.display.flip()
         clock.tick(60)  # 60 FPS
+
+def play_ai_vs_ai(model1_path, model2_path, model1_name, model2_name, num_games=1000):
+    """AI vs AI game mode - plays multiple games without GUI and reports results."""
+    print(f"Loading {model1_name} from: {model1_path}")
+    model1 = tf.keras.models.load_model(model1_path)
+    
+    print(f"Loading {model2_name} from: {model2_path}")
+    model2 = tf.keras.models.load_model(model2_path)
+    
+    # Track results: model1 plays White, model2 plays Black
+    wins_model1 = 0
+    wins_model2 = 0
+    draws = 0
+    
+    print(f"\nStarting {num_games} games: {model1_name} (White) vs {model2_name} (Black)")
+    print("=" * 60)
+    
+    for game_num in range(1, num_games + 1):
+        board = chess.Board()
+        move_count = 0
+        max_moves = 200  # Prevent infinite games
+        
+        while not board.is_game_over() and move_count < max_moves:
+            if board.turn == chess.WHITE:
+                # Model 1's turn (White)
+                move = get_ai_move_fast(board, model1)
+            else:
+                # Model 2's turn (Black)
+                move = get_ai_move_fast(board, model2)
+            
+            if move is None:
+                break
+            
+            board.push(move)
+            move_count += 1
+        
+        # Determine the result
+        if board.is_checkmate():
+            if board.turn == chess.BLACK:
+                # White won (model1)
+                wins_model1 += 1
+                result = f"{model1_name} wins"
+            else:
+                # Black won (model2)
+                wins_model2 += 1
+                result = f"{model2_name} wins"
+        else:
+            # Draw (stalemate, insufficient material, or max moves reached)
+            draws += 1
+            result = "Draw"
+        
+        # Print progress every 100 games
+        if game_num % 100 == 0:
+            print(f"Game {game_num}/{num_games} complete - {result}")
+            print(f"  Current score: {model1_name} {wins_model1} - {draws} - {wins_model2} {model2_name}")
+    
+    # Print final results
+    print("\n" + "=" * 60)
+    print("FINAL RESULTS")
+    print("=" * 60)
+    print(f"{model1_name} (White): {wins_model1} wins ({wins_model1/num_games*100:.1f}%)")
+    print(f"Draws: {draws} ({draws/num_games*100:.1f}%)")
+    print(f"{model2_name} (Black): {wins_model2} wins ({wins_model2/num_games*100:.1f}%)")
+    print("=" * 60)
+    print(f"Win-Draw-Loss: {wins_model1}-{draws}-{wins_model2}")
+
+def main():
+    parser = argparse.ArgumentParser(description="Chess Game with AI")
+    parser.add_argument(
+        '--mode',
+        type=str,
+        choices=['human', 'ai', 'ai-vs-ai'],
+        required=True,
+        help='Game mode: "human" (human vs human), "ai" (human vs AI), or "ai-vs-ai" (AI vs AI)'
+    )
+    parser.add_argument(
+        '--model',
+        type=str,
+        help='Path to AI model file (required for "ai" mode)'
+    )
+    parser.add_argument(
+        '--model1',
+        type=str,
+        help='Path to first AI model file (required for "ai-vs-ai" mode)'
+    )
+    parser.add_argument(
+        '--model2',
+        type=str,
+        help='Path to second AI model file (required for "ai-vs-ai" mode)'
+    )
+    parser.add_argument(
+        '--name1',
+        type=str,
+        default='Model 1',
+        help='Name for first AI model (for "ai-vs-ai" mode, default: "Model 1")'
+    )
+    parser.add_argument(
+        '--name2',
+        type=str,
+        default='Model 2',
+        help='Name for second AI model (for "ai-vs-ai" mode, default: "Model 2")'
+    )
+    parser.add_argument(
+        '--games',
+        type=int,
+        default=1000,
+        help='Number of games to play in "ai-vs-ai" mode (default: 1000)'
+    )
+    
+    args = parser.parse_args()
+    
+    # Validate arguments based on mode
+    if args.mode == 'human':
+        play_human_vs_human()
+    
+    elif args.mode == 'ai':
+        if not args.model:
+            parser.error('--model is required for "ai" mode')
+        play_human_vs_ai(args.model)
+    
+    elif args.mode == 'ai-vs-ai':
+        if not args.model1 or not args.model2:
+            parser.error('--model1 and --model2 are required for "ai-vs-ai" mode')
+        play_ai_vs_ai(args.model1, args.model2, args.name1, args.name2, args.games)
 
 if __name__ == "__main__":
     main()
