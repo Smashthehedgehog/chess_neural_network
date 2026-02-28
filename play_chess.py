@@ -81,7 +81,18 @@ def get_ai_move(board, model):
         
     return best_move
 
-def get_ai_move_fast(board, model):
+def get_ai_move_fast(board, model, temperature=1.0):
+    """
+    Get AI move with temperature-based sampling.
+    
+    Args:
+        board: Current chess board state
+        model: AI model to use for evaluation
+        temperature: Controls randomness (higher = more random, lower = more deterministic)
+                     temperature=0.0 means always pick the best move (deterministic)
+                     temperature=1.0 means sample proportionally to scores
+                     temperature>1.0 means more exploration/randomness
+    """
     legal_moves = list(board.legal_moves)
     if not legal_moves:
         return None
@@ -90,20 +101,40 @@ def get_ai_move_fast(board, model):
     tensors = []
     for move in legal_moves:
         board.push(move)
-        tensors.append(create_tensor(board)) # Your 8x8x12 function
+        tensors.append(create_tensor(board))
         board.pop()
 
     # 2. Convert list to a single 4D NumPy array (Batch, 8, 8, 12)
     batch_input = np.array(tensors)
 
-    # 3. Predict ALL scores at once (This is significantly faster)
-    predictions = model.predict(batch_input, verbose=0)
+    # 3. Predict ALL scores at once
+    predictions = model.predict(batch_input, verbose=0).flatten()
 
-    # 4. Find the best index based on whose turn it is
-    if board.turn == chess.WHITE:
-        best_move_idx = np.argmax(predictions)
+    # 4. Apply temperature-based sampling
+    if temperature == 0.0:
+        # Deterministic: always pick the best move
+        if board.turn == chess.WHITE:
+            best_move_idx = np.argmax(predictions)
+        else:
+            best_move_idx = np.argmin(predictions)
     else:
-        best_move_idx = np.argmin(predictions)
+        # Temperature-based sampling
+        if board.turn == chess.WHITE:
+            # White wants higher scores
+            scores = predictions
+        else:
+            # Black wants lower scores, so invert
+            scores = -predictions
+        
+        # Apply temperature scaling
+        scaled_scores = scores / temperature
+        
+        # Convert to probabilities using softmax
+        exp_scores = np.exp(scaled_scores - np.max(scaled_scores))  # Subtract max for numerical stability
+        probabilities = exp_scores / np.sum(exp_scores)
+        
+        # Sample a move based on probabilities
+        best_move_idx = np.random.choice(len(legal_moves), p=probabilities)
 
     return legal_moves[best_move_idx]
 
@@ -292,7 +323,7 @@ def play_human_vs_human():
         pygame.display.flip()
         clock.tick(60)  # 60 FPS
 
-def play_human_vs_ai(ai_model_path):
+def play_human_vs_ai(ai_model_path, temperature=0.5):
     """Human vs AI game mode with GUI."""
     pygame.init()
     screen = pygame.display.set_mode((BOARD_SIZE, BOARD_SIZE))
@@ -315,7 +346,7 @@ def play_human_vs_ai(ai_model_path):
         # AI TURN (Black)
         if not board.is_game_over() and board.turn == chess.BLACK and not dragging:
             print("AI is thinking...")
-            move = get_ai_move_fast(board, model)
+            move = get_ai_move_fast(board, model, temperature=temperature)
             board.push(move)
             print(f"AI played: {move}")
 
@@ -400,7 +431,7 @@ def play_human_vs_ai(ai_model_path):
         pygame.display.flip()
         clock.tick(60)  # 60 FPS
 
-def play_ai_vs_ai(model1_path, model2_path, model1_name, model2_name, num_games=1000):
+def play_ai_vs_ai(model1_path, model2_path, model1_name, model2_name, num_games=1000, temperature=1.0):
     """AI vs AI game mode - plays multiple games without GUI and reports results."""
     print(f"Loading {model1_name} from: {model1_path}")
     model1 = tf.keras.models.load_model(model1_path)
@@ -414,6 +445,7 @@ def play_ai_vs_ai(model1_path, model2_path, model1_name, model2_name, num_games=
     draws = 0
     
     print(f"\nStarting {num_games} games: {model1_name} (White) vs {model2_name} (Black)")
+    print(f"Temperature: {temperature}")
     print("=" * 60)
     
     for game_num in range(1, num_games + 1):
@@ -424,10 +456,10 @@ def play_ai_vs_ai(model1_path, model2_path, model1_name, model2_name, num_games=
         while not board.is_game_over() and move_count < max_moves:
             if board.turn == chess.WHITE:
                 # Model 1's turn (White)
-                move = get_ai_move_fast(board, model1)
+                move = get_ai_move_fast(board, model1, temperature=temperature)
             else:
                 # Model 2's turn (Black)
-                move = get_ai_move_fast(board, model2)
+                move = get_ai_move_fast(board, model2, temperature=temperature)
             
             if move is None:
                 break
@@ -507,6 +539,12 @@ def main():
         default=1000,
         help='Number of games to play in "ai-vs-ai" mode (default: 1000)'
     )
+    parser.add_argument(
+        '--temperature',
+        type=float,
+        default=1.0,
+        help='Temperature for move sampling (default: 1.0). Higher = more random, lower = more deterministic. Use 0.0 for purely best moves.'
+    )
     
     args = parser.parse_args()
     
@@ -517,12 +555,12 @@ def main():
     elif args.mode == 'ai':
         if not args.model:
             parser.error('--model is required for "ai" mode')
-        play_human_vs_ai(args.model)
+        play_human_vs_ai(args.model, temperature=args.temperature)
     
     elif args.mode == 'ai-vs-ai':
         if not args.model1 or not args.model2:
             parser.error('--model1 and --model2 are required for "ai-vs-ai" mode')
-        play_ai_vs_ai(args.model1, args.model2, args.name1, args.name2, args.games)
+        play_ai_vs_ai(args.model1, args.model2, args.name1, args.name2, args.games, temperature=args.temperature)
 
 if __name__ == "__main__":
     main()
