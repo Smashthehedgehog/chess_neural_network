@@ -81,9 +81,93 @@ def create_training_data(filename='lichess_db_standard_rated_2013-07.pgn', num_g
         np.save('X.npy', X)
         np.save('y.npy', y)
 
+def create_training_data_v2(filename='lichess_db_standard_rated_2013-07.pgn', num_games=None):
+    """
+    Loads chess games from a PGN file, creates training data arrays X (features) and y (labels),
+    and saves them to 'X_v2.npy' and 'y_v2.npy'.
+
+    :param filename: PGN file name to load games from. If None, defaults to 'lichess_db_standard_rated_2013-07.pgn'.
+    :param num_games: Number of games to load. If None, loads all games in the file.
+    :result: Vector of 1 or -1 depending on the moves that led to a check/checkmate.
+             1 = positions leading up to White check/checkmate
+             -1 = positions leading up to Black check/checkmate
+             0 = positions that don't lead to any check/checkmate
+    """
+    with open(filename) as chess_data:
+        game_count = 0
+        X_list = []
+        y_list = []
+
+        while True:
+            if num_games is not None and game_count >= num_games:
+                break
+            game = chess.pgn.read_game(chess_data)
+            if game is None:
+                break  # End of file
+
+            board = game.board()
+            game_boards = []  # Store board states for this game
+            game_labels = []  # Store labels for each position (initially None)
+            
+            # First pass: collect all board states and detect checks/checkmates
+            for move in game.mainline_moves():
+                board.push(move)
+                game_boards.append(create_tensor(board))
+                
+                # Check if this move resulted in a check or checkmate
+                if board.is_check() or board.is_checkmate():
+                    # Determine who delivered the check/checkmate (the player who just moved)
+                    # After board.push(move), board.turn has switched to the opponent
+                    # So if board.turn is BLACK, WHITE just moved and delivered check
+                    if board.turn == chess.BLACK:
+                        # White delivered check/checkmate
+                        game_labels.append(1)
+                    else:
+                        # Black delivered check/checkmate
+                        game_labels.append(-1)
+                else:
+                    game_labels.append(None)  # Placeholder for non-check positions
+            
+            # Second pass: backfill labels - assign check labels to all positions leading up to each check
+            last_check_index = -1
+            
+            for i in range(len(game_labels)):
+                if game_labels[i] is not None:
+                    # This is a check/checkmate position
+                    check_label = game_labels[i]
+                    
+                    # Backfill all positions from last_check_index+1 to i (inclusive) with this label
+                    for j in range(last_check_index + 1, i + 1):
+                        game_labels[j] = check_label
+                    
+                    # Update tracking
+                    last_check_index = i
+            
+            # Third pass: any remaining positions without labels get 0
+            for i in range(len(game_labels)):
+                if game_labels[i] is None:
+                    game_labels[i] = 0
+            
+            # Add all positions from this game to the training data
+            for i in range(len(game_boards)):
+                X_list.append(game_boards[i])
+                y_list.append(game_labels[i])
+
+            print(game_labels)
+
+            game_count += 1
+            
+            
+
+        X = np.array(X_list)
+        y = np.array(y_list)
+        np.save('X_v2.npy', X)
+        np.save('y_v2.npy', y)
+
 board = chess.Board()
 
 print(board.turn)
 
+create_training_data_v2(num_games=10)
 
 
